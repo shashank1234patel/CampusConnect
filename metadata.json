@@ -1,0 +1,6 @@
+{
+  "name": "CampusConnect - Event Management Platform",
+  "description": "Discover upcoming college events, register with unique passes, host events with participant management, and admin moderation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,4 +1,4 @@
-import { CampusEvent, EventRegistration, Announcement, User, CampusPost } from '../types';
+import type { CampusEvent, EventRegistration, Announcement, User, CampusPost } from '../types/index.ts';
 
 export const INITIAL_USERS: User[] = [
   {

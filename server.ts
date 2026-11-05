@@ -1,9 +1,10 @@
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { INITIAL_EVENTS, INITIAL_REGISTRATIONS, INITIAL_USERS, INITIAL_ANNOUNCEMENTS } from './src/data/initialData.ts';
-import { CampusEvent, EventRegistration, Announcement, User } from './src/types/index.ts';
+import type { CampusEvent, EventRegistration, Announcement, User } from './src/types/index.ts';
 
 dotenv.config();
 
@@ -296,19 +297,38 @@ async function startServer() {
   const isDev = process.env.NODE_ENV !== 'production';
 
   if (isDev) {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: false,
-      },
-      appType: 'spa',
+    let viteMiddleware: any = null;
+    const viteReadyPromise = import('vite')
+      .then(({ createServer: createViteServer }) =>
+        createViteServer({
+          server: {
+            middlewareMode: true,
+            hmr: false,
+          },
+          appType: 'spa',
+        })
+      )
+      .then(vite => {
+        viteMiddleware = vite.middlewares;
+        return vite;
+      })
+      .catch(err => {
+        console.error('Failed to initialize Vite middleware:', err);
+      });
+
+    app.use(async (req: Request, res: Response, next: NextFunction) => {
+      if (!viteMiddleware) {
+        await viteReadyPromise;
+      }
+      if (viteMiddleware) {
+        return viteMiddleware(req, res, next);
+      }
+      next();
     });
-    app.use(vite.middlewares);
   } else {
     // Serve static build in production
     app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
+    app.get('*', (_req: Request, res: Response) => {
       res.sendFile(path.join(__dirname, 'dist', 'index.html'));
     });
   }

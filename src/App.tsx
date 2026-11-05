@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { LinkedInNavbar } from './components/LinkedInNavbar';
-import { FloatingMessaging } from './components/FloatingMessaging';
 import { Footer } from './components/Footer';
 import { HomeView } from './components/HomeView';
 import { ExploreEventsView } from './components/ExploreEventsView';
@@ -184,9 +183,6 @@ function MainApp() {
         isOpen={isGitHubDeployOpen}
         onClose={() => setIsGitHubDeployOpen(false)}
       />
-
-      {/* Floating LinkedIn Messaging Drawer */}
-      <FloatingMessaging />
 
       {/* Floating API Endpoints Live Button (bottom left) - visible ONLY to the host */}
       {isHost && (

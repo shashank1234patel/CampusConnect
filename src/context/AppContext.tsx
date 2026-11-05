@@ -328,12 +328,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Sync to Supabase project if configured
     if (isSupabaseConfigured()) {
-      supabaseService.insertTestDataToSupabase(newEvent.title)
-        .then(res => {
-          if (res.success) {
-            addLog('POST', 'supabase:events', 201, `Synced event to Supabase (${newEvent.title})`);
+      supabaseService.syncEventToSupabase(newEvent)
+        .then(ok => {
+          if (ok) {
+            addLog('POST', 'supabase:events', 201, `Synced event to Supabase events table (${newEvent.title})`);
           } else {
-            addLog('POST', 'supabase:events', res.httpCode || 400, `Supabase sync: ${res.message}`);
+            addLog('POST', 'supabase:events', 400, `Supabase sync check notice`);
           }
         })
         .catch(err => {
@@ -422,10 +422,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         );
 
         if (isSupabaseConfigured()) {
-          supabaseService.createRegistration(effectiveUser.id, eventId)
+          supabaseService.createRegistration(
+            effectiveUser.id,
+            eventId,
+            { name: effectiveUser.name, email: effectiveUser.email, role: effectiveUser.role },
+            {
+              title: targetEvent.title,
+              capacity: targetEvent.maxParticipants,
+              date: targetEvent.date,
+              organizerId: targetEvent.organizerId,
+            }
+          )
             .then(sRes => {
               if (sRes.success) {
-                addLog('POST', 'supabase:registrations', sRes.status, `Saved to Supabase database (Pass: ${sRes.registrationId})`);
+                addLog('POST', 'supabase:registrations', sRes.status, `Saved to Supabase registrations table (Pass: ${sRes.registrationId})`);
               } else {
                 addLog('POST', 'supabase:registrations', sRes.status, `Supabase notice: ${sRes.message}`);
               }
@@ -517,6 +527,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
 
       addLog('POST', '/api/registrations', 201, `Registration created (Pass ID: ${newRegId})`);
+
+      if (isSupabaseConfigured()) {
+        supabaseService.createRegistration(
+          effectiveUser.id,
+          eventId,
+          { name: effectiveUser.name, email: effectiveUser.email, role: effectiveUser.role },
+          {
+            title: targetEvent.title,
+            capacity: targetEvent.maxParticipants,
+            date: targetEvent.date,
+            organizerId: targetEvent.organizerId,
+          }
+        )
+          .then(sRes => {
+            if (sRes.success) {
+              addLog('POST', 'supabase:registrations', sRes.status, `Saved to Supabase registrations table (Pass: ${sRes.registrationId})`);
+            }
+          })
+          .catch(() => {});
+      }
 
       return {
         success: true,

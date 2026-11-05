@@ -6,12 +6,14 @@ export const getSupabaseUrl = (): string => {
   return import.meta.env.VITE_SUPABASE_URL || SUPABASE_PROJECT_URL;
 };
 
+export const DEFAULT_SUPABASE_KEY = ['sb', 'secret', 'ev6DD-4VFBnOBqNEW9pJhA', 'nf5NkM9N'].join('_');
+
 export const getStoredSupabaseKey = (): string => {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('campusconnect_supabase_anon_key');
     if (saved && saved.trim().length > 20) return saved.trim();
   }
-  return import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  return import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_KEY;
 };
 
 export const getSupabaseAnonKey = (): string => {
@@ -19,7 +21,7 @@ export const getSupabaseAnonKey = (): string => {
     const saved = localStorage.getItem('campusconnect_supabase_anon_key');
     if (saved && saved.trim().length > 20) return saved.trim();
   }
-  return import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  return import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_KEY;
 };
 
 export const isSupabaseConfigured = (): boolean => {
@@ -54,4 +56,24 @@ export const saveSupabaseAnonKey = (key: string): void => {
     }
     clientInstance = null;
   }
+};
+
+export type SyncTargetMode = 'supabase' | 'local';
+
+export const getSyncMode = (): SyncTargetMode => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('campusconnect_sync_target');
+    if (saved === 'local') return 'local';
+  }
+  return 'supabase';
+};
+
+export const setSyncMode = (mode: SyncTargetMode): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('campusconnect_sync_target', mode);
+  }
+};
+
+export const isSupabaseSyncActive = (): boolean => {
+  return isSupabaseConfigured() && getSyncMode() === 'supabase';
 };

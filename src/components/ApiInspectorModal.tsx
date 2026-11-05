@@ -5,7 +5,9 @@ import {
   getSupabaseUrl, 
   getSupabaseAnonKey, 
   saveSupabaseAnonKey, 
-  isSupabaseConfigured 
+  isSupabaseConfigured,
+  getSyncMode,
+  setSyncMode
 } from '../lib/supabase';
 import { supabaseService } from '../services/supabaseService';
 import { 
@@ -53,6 +55,8 @@ export const ApiInspectorModal: React.FC<ApiInspectorModalProps> = ({ isOpen, on
   // Live Data Insertion Test state
   const [testInsertTitle, setTestInsertTitle] = useState('Campus Hackathon 2026');
   const [isInserting, setIsInserting] = useState(false);
+  const [isInsertingReg, setIsInsertingReg] = useState(false);
+  const [syncTarget, setSyncTarget] = useState<'supabase' | 'local'>(() => getSyncMode());
   const [insertResult, setInsertResult] = useState<{
     tested: boolean;
     success: boolean;
@@ -61,6 +65,11 @@ export const ApiInspectorModal: React.FC<ApiInspectorModalProps> = ({ isOpen, on
     insertedData?: any;
     httpCode?: number;
   } | null>(null);
+
+  const handleSelectSyncTarget = (mode: 'supabase' | 'local') => {
+    setSyncMode(mode);
+    setSyncTarget(mode);
+  };
 
 
   // Endpoint testing state
@@ -147,6 +156,31 @@ export const ApiInspectorModal: React.FC<ApiInspectorModalProps> = ({ isOpen, on
       });
     } finally {
       setIsInserting(false);
+    }
+  };
+
+  const handleTestRegistrationInsert = async () => {
+    setIsInsertingReg(true);
+    setInsertResult(null);
+    try {
+      const res = await supabaseService.insertTestRegistrationToSupabase(testInsertTitle);
+      setInsertResult({
+        tested: true,
+        success: res.success,
+        message: res.message,
+        details: res.details,
+        insertedData: res.insertedData,
+        httpCode: res.httpCode,
+      });
+    } catch (err: any) {
+      setInsertResult({
+        tested: true,
+        success: false,
+        message: err.message || 'Error executing Supabase registration check',
+        details: String(err),
+      });
+    } finally {
+      setIsInsertingReg(false);
     }
   };
 
@@ -524,48 +558,115 @@ VALUES (
                   </div>
                 </div>
 
-                {/* Status Comparison Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 rounded-lg border border-slate-200 bg-white">
-                    <div className="flex items-center justify-between font-bold text-slate-800 mb-1">
-                      <span>1. Website State (Form & Local API)</span>
-                      <span className="text-emerald-600 font-semibold text-[11px] flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Operational
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-600">
-                      When users register or create events on the website, submissions are received and stored in active website memory.
-                    </p>
+                {/* Status Comparison Cards - Selectable by User */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                      Select Website Sync Target (Click to Choose Mode):
+                    </span>
+                    <span className="text-[11px] text-indigo-700 font-semibold">
+                      {syncTarget === 'supabase' ? '● Supabase Sync Active' : '○ Local Memory Only'}
+                    </span>
                   </div>
 
-                  <div className={`p-3 rounded-lg border ${
-                    configured 
-                      ? 'border-emerald-200 bg-emerald-50/50' 
-                      : 'border-amber-200 bg-amber-50/50'
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    {/* Card 1: Website Live Supabase Sync */}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectSyncTarget('supabase')}
+                      className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer relative ${
+                        syncTarget === 'supabase'
+                          ? 'border-indigo-600 bg-indigo-50/90 shadow-xs ring-2 ring-indigo-500/30'
+                          : 'border-slate-200 bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-bold text-slate-900 mb-1.5">
+                        <span className="flex items-center gap-1.5">
+                          <span className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                            syncTarget === 'supabase'
+                              ? 'border-indigo-600 bg-indigo-600 text-white'
+                              : 'border-slate-400 bg-white'
+                          }`}>
+                            {syncTarget === 'supabase' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                          </span>
+                          1. Website State: Live Supabase Sync
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                          configured 
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                            : 'bg-amber-100 text-amber-800 border border-amber-300'
+                        }`}>
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          {configured ? 'Selected & Ready' : 'Key Needed'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-700 leading-relaxed">
+                        <strong className="text-indigo-900 font-semibold">Active: </strong>
+                        When users register for events or hosts create events on the website, submissions write directly into Supabase tables (<span className="font-mono text-purple-700 font-semibold">registrations</span>, <span className="font-mono text-blue-700 font-semibold">events</span>, <span className="font-mono text-slate-700 font-semibold">users</span>).
+                      </p>
+                    </button>
+
+                    {/* Card 2: Local Memory Sandbox */}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectSyncTarget('local')}
+                      className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer relative ${
+                        syncTarget === 'local'
+                          ? 'border-slate-800 bg-slate-100 shadow-xs ring-2 ring-slate-400/30'
+                          : 'border-slate-200 bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-bold text-slate-900 mb-1.5">
+                        <span className="flex items-center gap-1.5">
+                          <span className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                            syncTarget === 'local'
+                              ? 'border-slate-800 bg-slate-800 text-white'
+                              : 'border-slate-400 bg-white'
+                          }`}>
+                            {syncTarget === 'local' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                          </span>
+                          2. Local Memory Sandbox Only
+                        </span>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                          {syncTarget === 'local' ? 'Active' : 'Offline'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed">
+                        Data submissions stay strictly in temporary browser session state and will not be pushed to Supabase tables.
+                      </p>
+                    </button>
+                  </div>
+
+                  {/* Active Selection Banner */}
+                  <div className={`mt-2.5 p-2.5 rounded-lg border text-xs flex items-center gap-2 ${
+                    syncTarget === 'supabase'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                      : 'bg-slate-100 border-slate-200 text-slate-700'
                   }`}>
-                    <div className="flex items-center justify-between font-bold text-slate-800 mb-1">
-                      <span>2. Supabase Cloud Project</span>
-                      <span className={`font-semibold text-[11px] flex items-center gap-1 ${
-                        configured ? 'text-emerald-700' : 'text-amber-700'
-                      }`}>
-                        {configured ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
-                        {configured ? 'Ready for Writes' : 'Needs Anon Key (HTTP 401)'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-600">
-                      {configured 
-                        ? 'Project key is configured. Data submissions will persist directly to your Supabase tables.'
-                        : 'Supabase strictly blocks writes without your anon key. Data is not yet reaching Supabase.'}
-                    </p>
+                    {syncTarget === 'supabase' ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>
+                          <strong>Website Status Selected: Direct Supabase Cloud Sync Active.</strong> Any registration or new event on the website will update directly to your Supabase tables.
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Info className="w-4 h-4 text-slate-500 shrink-0" />
+                        <span>
+                          <strong>Website Status Selected: Local Memory Sandbox.</strong> Click Card 1 above to switch to live Supabase database sync.
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
-                {/* Live Put Data Input & Action */}
+                {/* Live Put Data Input & Action (Event & Registration tests) */}
                 <div className="pt-2">
                   <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1.5">
-                    Test Payload: Event Title to Insert
+                    Test Payload: Event Title to Insert & Verify
                   </label>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <input
                       type="text"
                       value={testInsertTitle}
@@ -573,14 +674,25 @@ VALUES (
                       placeholder="e.g. National Hackathon 2026"
                       className="flex-1 px-3.5 py-2 border border-slate-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
                     />
-                    <button
-                      onClick={handleTestInsert}
-                      disabled={isInserting}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-1.5 transition-colors shrink-0 disabled:opacity-50"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>{isInserting ? 'Checking...' : 'Put Data into Supabase'}</span>
-                    </button>
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={handleTestInsert}
+                        disabled={isInserting || isInsertingReg}
+                        className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>{isInserting ? 'Writing...' : 'Put Event to Supabase'}</span>
+                      </button>
+
+                      <button
+                        onClick={handleTestRegistrationInsert}
+                        disabled={isInserting || isInsertingReg}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{isInsertingReg ? 'Registering...' : 'Put Registration to Supabase'}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 

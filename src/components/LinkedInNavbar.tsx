@@ -253,8 +253,19 @@ export const LinkedInNavbar: React.FC<LinkedInNavbarProps> = ({
                     <div className="border-t border-slate-100 pt-1">
                       <button
                         onClick={() => {
+                          setProfileDropdownOpen(false);
+                          openAuthModal('login');
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs text-[#0a66c2] hover:bg-blue-50 font-semibold flex items-center gap-2.5"
+                      >
+                        <UserIcon className="w-4 h-4 text-[#0a66c2]" />
+                        Switch Account / Login Options
+                      </button>
+                      <button
+                        onClick={() => {
                           logout();
                           setProfileDropdownOpen(false);
+                          openAuthModal('login');
                         }}
                         className="w-full text-left px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 flex items-center gap-2.5"
                       >

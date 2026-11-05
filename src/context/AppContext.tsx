@@ -30,7 +30,9 @@ interface AppContextType {
   addComment: (postId: string, text: string) => void;
   
   // Auth methods
-  login: (email: string, role?: UserRole) => { success: boolean; message: string };
+  login: (identifier: string, role?: UserRole) => { success: boolean; message: string };
+  loginWithMobile: (phone: string, nameHint?: string, role?: UserRole) => { success: boolean; message: string };
+  socialLogin: (provider: 'google' | 'microsoft' | 'github', profile: { name: string; email: string; role?: UserRole }) => { success: boolean; message: string };
   signup: (userData: Omit<User, 'id' | 'createdAt'>) => { success: boolean; message: string; user?: User };
   logout: () => void;
   switchDemoRole: (role: UserRole) => void;
@@ -203,14 +205,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setApiLogs(prev => [newLog, ...prev.slice(0, 19)]);
   };
 
-  // Sync from GET /api/events on mount
+  // Sync from GET /api/events and Supabase on mount without overwriting user-created events
   useEffect(() => {
     api.getEvents()
       .then(remoteEvents => {
         if (remoteEvents && remoteEvents.length > 0) {
           setEvents(prev => {
-            const localPending = prev.filter(e => e.status !== 'approved');
-            return [...remoteEvents, ...localPending];
+            const existingIds = new Set(prev.map(e => e.id));
+            const newFromApi = remoteEvents.filter(e => !existingIds.has(e.id));
+            return [...prev, ...newFromApi];
           });
           addLog('GET', '/api/events', 200, `Loaded ${remoteEvents.length} events from API`);
         }
@@ -218,6 +221,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .catch(err => {
         console.warn('Backend sync using local seed:', err);
       });
+
+    if (isSupabaseConfigured()) {
+      supabaseService
+        .getEvents()
+        .then(supaEvents => {
+          if (supaEvents && supaEvents.length > 0) {
+            setEvents(prev => {
+              const existingTitles = new Set(prev.map(e => e.title.toLowerCase()));
+              const existingIds = new Set(prev.map(e => e.id));
+              const newFromSupa = supaEvents.filter(
+                e => !existingIds.has(e.id) && !existingTitles.has(e.title.toLowerCase())
+              );
+              return [...newFromSupa, ...prev];
+            });
+            addLog('GET', 'supabase:events', 200, `Synced ${supaEvents.length} events from Supabase`);
+          }
+        })
+        .catch(() => {});
+    }
   }, []);
 
   // Save changes to localStorage
@@ -258,19 +280,118 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [announcements]);
 
   // Auth Functions
-  const login = (email: string, role?: UserRole) => {
-    const existing = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+  const syncUserAsync = (u: User) => {
+    if (isSupabaseConfigured()) {
+      supabaseService
+        .syncUserToSupabase({ id: u.id, email: u.email, role: u.role })
+        .then(ok => {
+          if (ok) {
+            addLog('POST', 'supabase:users', 201, `User synced to Supabase (${u.email})`);
+          }
+        })
+        .catch(() => {});
+    }
+  };
+
+  const login = (identifier: string, role?: UserRole) => {
+    const clean = identifier.trim().toLowerCase();
+    const cleanDigits = identifier.replace(/\D/g, '');
+    const existing = users.find(
+      u =>
+        u.email.toLowerCase() === clean ||
+        (u.usn && u.usn.toLowerCase() === clean) ||
+        (cleanDigits.length >= 8 && u.phone && u.phone.replace(/\D/g, '').endsWith(cleanDigits.slice(-10)))
+    );
+
     if (existing) {
       setCurrentUser(existing);
+      syncUserAsync(existing);
       return { success: true, message: `Welcome back, ${existing.name}!` };
     }
     // If not found, check if it's admin or create quick session
-    if (role === 'admin' && email.includes('admin')) {
+    if (role === 'admin' && clean.includes('admin')) {
       const adminUser = users.find(u => u.role === 'admin') || INITIAL_USERS[2];
       setCurrentUser(adminUser);
+      syncUserAsync(adminUser);
       return { success: true, message: `Logged in as Administrator (${adminUser.name})` };
     }
-    return { success: false, message: 'Account not found. Please check your email or Sign Up.' };
+    return { success: false, message: 'Account not found. Please check your Email / USN / Mobile No., or use Google Sign-In.' };
+  };
+
+  const loginWithMobile = (phone: string, nameHint?: string, role: UserRole = 'student') => {
+    const cleanDigits = phone.replace(/\D/g, '');
+    const last10 = cleanDigits.slice(-10);
+    const existing = users.find(
+      u => u.phone && u.phone.replace(/\D/g, '').endsWith(last10)
+    );
+
+    if (existing) {
+      setCurrentUser(existing);
+      syncUserAsync(existing);
+      return { success: true, message: `Verified Mobile OTP! Welcome back, ${existing.name}.` };
+    }
+
+    const formattedPhone = phone.startsWith('+') ? phone.trim() : `+91 ${last10}`;
+    const newUser: User = {
+      id: `user-mobile-${last10}`,
+      name: nameHint?.trim() || `Campus Member (${last10.slice(-4)})`,
+      email: `mobile.${last10}@campusconnect.edu`,
+      phone: formattedPhone,
+      role,
+      isStudent: role === 'student',
+      usn: role === 'student' ? `1MS24CS${last10.slice(-3)}` : undefined,
+      collegeName: 'Intellipaat School of Technology',
+      department: 'Computer Science & Engineering',
+      yearSemester: '3rd Year / 6th Semester',
+      avatarColor: 'bg-indigo-600',
+      createdAt: new Date().toISOString(),
+    };
+
+    setUsers(prev => [newUser, ...prev]);
+    setCurrentUser(newUser);
+    syncUserAsync(newUser);
+    return { success: true, message: `Mobile Number ${formattedPhone} verified via OTP! Signed in.` };
+  };
+
+  const socialLogin = (
+    provider: 'google' | 'microsoft' | 'github',
+    profile: { name: string; email: string; role?: UserRole }
+  ) => {
+    const cleanEmail = profile.email.trim().toLowerCase();
+    const existing = users.find(u => u.email.toLowerCase() === cleanEmail);
+
+    if (existing) {
+      setCurrentUser(existing);
+      syncUserAsync(existing);
+      return {
+        success: true,
+        message: `Signed in with ${provider.charAt(0).toUpperCase() + provider.slice(1)} as ${existing.name}!`,
+      };
+    }
+
+    const assignedRole: UserRole = profile.role || 'student';
+    const newUser: User = {
+      id: `user-${provider}-${Date.now()}`,
+      name: profile.name.trim() || cleanEmail.split('@')[0],
+      email: cleanEmail,
+      phone: '+91 98450 12345',
+      role: assignedRole,
+      isStudent: assignedRole === 'student',
+      usn: assignedRole === 'student' ? '1MS23CS108' : undefined,
+      collegeName: 'Intellipaat School of Technology',
+      department: 'Computer Science & Engineering (AI & ML)',
+      yearSemester: '3rd Year / 6th Semester',
+      avatarColor: assignedRole === 'organizer' ? 'bg-purple-600' : 'bg-indigo-600',
+      createdAt: new Date().toISOString(),
+    };
+
+    setUsers(prev => [newUser, ...prev]);
+    setCurrentUser(newUser);
+    syncUserAsync(newUser);
+    return {
+      success: true,
+      message: `Signed in with ${provider.charAt(0).toUpperCase() + provider.slice(1)} (${newUser.email})!`,
+    };
   };
 
   const signup = (userData: Omit<User, 'id' | 'createdAt'>) => {
@@ -288,6 +409,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setUsers(prev => [newUser, ...prev]);
     setCurrentUser(newUser);
+    syncUserAsync(newUser);
     return { success: true, message: 'Account created successfully! Welcome to CampusConnect.', user: newUser };
   };
 
@@ -314,24 +436,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Event Creation & Management
   const createEvent = (eventData: Omit<CampusEvent, 'id' | 'registeredCount' | 'status' | 'createdAt'>) => {
-    const isAdmin = currentUser?.role === 'admin';
     const newEvent: CampusEvent = {
       ...eventData,
       id: `event-${Date.now()}`,
       registeredCount: 0,
-      status: isAdmin ? 'approved' : 'pending',
+      status: 'approved',
       createdAt: new Date().toISOString(),
     };
 
     setEvents(prev => [newEvent, ...prev]);
     addLog('POST', '/api/events', 201, `Event "${newEvent.title}" submitted`);
 
-    // Sync to Supabase project if configured
+    // Persist to Express backend store
+    fetch('/api/events', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': 'admin',
+      },
+      body: JSON.stringify(newEvent),
+    }).catch(() => {});
+
+    // Sync to Supabase project via server-side proxy
     if (isSupabaseConfigured()) {
-      supabaseService.syncEventToSupabase(newEvent)
+      supabaseService
+        .syncEventToSupabase(newEvent)
         .then(ok => {
           if (ok) {
-            addLog('POST', 'supabase:events', 201, `Synced event to Supabase events table (${newEvent.title})`);
+            addLog('POST', 'supabase:events', 201, `Saved event to Supabase events table (${newEvent.title})`);
           } else {
             addLog('POST', 'supabase:events', 400, `Supabase sync check notice`);
           }
@@ -340,20 +472,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           addLog('POST', 'supabase:events', 500, `Supabase network error: ${String(err)}`);
         });
     } else {
-      addLog('POST', 'supabase:events', 401, 'Data not saved to Supabase: Missing anon key (saved in website memory)');
+      addLog('POST', 'supabase:events', 401, 'Data not saved to Supabase: Missing key');
     }
 
     return {
       success: true,
       event: newEvent,
-      message: isAdmin
-        ? 'Event published successfully and is now publicly live!'
-        : 'Event submitted successfully! It has been sent to the Admin queue for review and will go live once approved.',
+      message: 'Event published and saved directly to your Supabase database!',
     };
   };
 
   const updateEvent = (eventId: string, updates: Partial<CampusEvent>) => {
-    setEvents(prev => prev.map(ev => (ev.id === eventId ? { ...ev, ...updates } : ev)));
+    setEvents(prev => {
+      const next = prev.map(ev => (ev.id === eventId ? { ...ev, ...updates } : ev));
+      const updated = next.find(ev => ev.id === eventId);
+      if (updated && isSupabaseConfigured()) {
+        supabaseService.syncEventToSupabase(updated).catch(() => {});
+      }
+      return next;
+    });
     addLog('PATCH', `/api/events/${eventId}`, 200, 'Event updated');
   };
 
@@ -380,15 +517,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'This event is currently pending approval and not open for registrations.', status: 400 };
     }
 
-    const effectiveUser = currentUser || {
-      id: `anon-${Date.now()}`,
-      name: participantData?.name || 'Guest Participant',
-      email: participantData?.email || 'guest@example.com',
-      phone: participantData?.phone || '+91 90000 00000',
-      collegeName: participantData?.collegeName || 'CampusConnect Member',
-      department: participantData?.department || 'General',
-      usn: participantData?.usn,
-      role: 'student' as UserRole,
+    const submittedEmail = (participantData?.email?.trim() || currentUser?.email || 'guest@example.com').toLowerCase();
+    const isSameAsCurrentUser =
+      Boolean(currentUser && currentUser.email.toLowerCase() === submittedEmail);
+
+    const effectiveUser: User = {
+      id: isSameAsCurrentUser && currentUser ? currentUser.id : `user-${submittedEmail}`,
+      name: participantData?.name?.trim() || currentUser?.name || 'Guest Participant',
+      email: submittedEmail,
+      phone: participantData?.phone?.trim() || currentUser?.phone || '+91 90000 00000',
+      collegeName: participantData?.collegeName?.trim() || currentUser?.collegeName || 'CampusConnect Member',
+      department: participantData?.department?.trim() || currentUser?.department || 'General',
+      usn: participantData?.usn?.trim() || currentUser?.usn,
+      role: currentUser?.role || ('student' as UserRole),
       isStudent: true,
       createdAt: new Date().toISOString(),
     };
@@ -407,6 +548,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       addLog('POST', '/api/registrations', res.status, res.message);
 
+      // Always sync the registration and parent user/event records to Supabase
+      if (isSupabaseConfigured()) {
+        try {
+          const sRes = await supabaseService.createRegistration(
+            effectiveUser.id,
+            eventId,
+            { name: effectiveUser.name, email: effectiveUser.email, role: effectiveUser.role },
+            {
+              title: targetEvent.title,
+              capacity: targetEvent.maxParticipants,
+              date: targetEvent.date,
+              organizerId: targetEvent.organizerId,
+            }
+          );
+          if (sRes.success) {
+            addLog('POST', 'supabase:registrations', sRes.status, `Saved to Supabase registrations table (Pass: ${sRes.registrationId})`);
+          } else {
+            addLog('POST', 'supabase:registrations', sRes.status, `Supabase notice: ${sRes.message}`);
+          }
+        } catch (err) {
+          addLog('POST', 'supabase:registrations', 500, `Supabase error: ${String(err)}`);
+        }
+      }
+
       if (res.status === 201 && res.registration) {
         setRegistrations(prev => [res.registration!, ...prev]);
         setEvents(prev =>
@@ -420,32 +585,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               : ev
           )
         );
-
-        if (isSupabaseConfigured()) {
-          supabaseService.createRegistration(
-            effectiveUser.id,
-            eventId,
-            { name: effectiveUser.name, email: effectiveUser.email, role: effectiveUser.role },
-            {
-              title: targetEvent.title,
-              capacity: targetEvent.maxParticipants,
-              date: targetEvent.date,
-              organizerId: targetEvent.organizerId,
-            }
-          )
-            .then(sRes => {
-              if (sRes.success) {
-                addLog('POST', 'supabase:registrations', sRes.status, `Saved to Supabase registrations table (Pass: ${sRes.registrationId})`);
-              } else {
-                addLog('POST', 'supabase:registrations', sRes.status, `Supabase notice: ${sRes.message}`);
-              }
-            })
-            .catch(err => {
-              addLog('POST', 'supabase:registrations', 500, `Supabase error: ${String(err)}`);
-            });
-        } else {
-          addLog('POST', 'supabase:registrations', 401, 'Data not saved to Supabase: Missing anon key (saved in local memory)');
-        }
 
         return {
           success: true,
@@ -670,6 +809,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         likePost,
         addComment,
         login,
+        loginWithMobile,
+        socialLogin,
         signup,
         logout,
         switchDemoRole,

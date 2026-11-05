@@ -31,14 +31,17 @@ export function ensureValidUuid(rawId: string, namespace = '10000000'): string {
   if (uuidRegex.test(rawId)) {
     return rawId.toLowerCase();
   }
-  let hash = 0;
+  let h1 = 0x811c9dc5;
+  let h2 = 0x1000193;
   for (let i = 0; i < rawId.length; i++) {
-    hash = (hash << 5) - hash + rawId.charCodeAt(i);
-    hash |= 0;
+    const code = rawId.charCodeAt(i);
+    h1 = Math.imul(h1 ^ code, 0x01000193);
+    h2 = Math.imul(h2 ^ code, 0x85ebca6b);
   }
-  const hexPart = Math.abs(hash).toString(16).padStart(8, '0');
-  const safeNs = namespace.slice(0, 8);
-  return `${safeNs}-0000-4000-8000-${hexPart.repeat(3).slice(0, 12)}`;
+  const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
+  const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
+  const safeNs = namespace.replace(/[^0-9a-f]/gi, '0').padEnd(8, '0').slice(0, 8);
+  return `${safeNs}-${hex1.slice(0, 4)}-4${hex1.slice(5, 8)}-8${hex2.slice(1, 4)}-${(hex1 + hex2).slice(0, 12)}`;
 }
 
 export const supabaseService = {
@@ -47,6 +50,33 @@ export const supabaseService = {
    */
   toUuid(id: string, ns = '10000000'): string {
     return ensureValidUuid(id, ns);
+  },
+
+  /**
+   * Automatically sync a user into Supabase users table
+   */
+  async syncUserToSupabase(user: { id: string; email: string; role?: string }): Promise<boolean> {
+    if (!isSupabaseConfigured()) return false;
+    try {
+      const client = getSupabaseClient();
+      const validUserId = ensureValidUuid(user.id, '10000000');
+      const { error } = await client.from('users').upsert(
+        {
+          id: validUserId,
+          email: user.email,
+          role: user.role || 'student',
+        },
+        { onConflict: 'id' }
+      );
+      if (error) {
+        console.warn('Supabase syncUser error:', error.message);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('Failed to sync user to Supabase', e);
+      return false;
+    }
   },
 
   /**
@@ -68,13 +98,18 @@ export const supabaseService = {
 
       // 2. Upsert event into events table
       const eventTimestamp = event.date ? new Date(event.date).toISOString() : new Date().toISOString();
-      await client.from('events').upsert({
+      const { error: eventErr } = await client.from('events').upsert({
         id: validEventId,
         organiser_id: validOrganizerId,
         title: event.title,
         capacity: event.maxParticipants || 100,
         timestamp: eventTimestamp
       }, { onConflict: 'id' });
+
+      if (eventErr) {
+        console.warn('Supabase syncEvent error:', eventErr.message);
+        return false;
+      }
 
       return true;
     } catch (e) {

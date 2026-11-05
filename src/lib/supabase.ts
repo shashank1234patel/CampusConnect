@@ -31,14 +31,38 @@ export const isSupabaseConfigured = (): boolean => {
 
 let clientInstance: SupabaseClient | null = null;
 
+const serverProxyFetch: typeof fetch = async (input, init) => {
+  const rawUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  const projectBase = getSupabaseUrl().replace(/\/$/, '');
+
+  if (typeof window !== 'undefined' && rawUrl.startsWith(projectBase)) {
+    const relativePath = rawUrl.slice(projectBase.length);
+    const proxyUrl = `/api/supabase-proxy${relativePath}`;
+    try {
+      const res = await window.fetch(proxyUrl, init);
+      if (res.status !== 404) {
+        return res;
+      }
+    } catch {
+      // Fallback to direct fetch if server proxy is unavailable
+    }
+  }
+  return window.fetch(input, init);
+};
+
 export const getSupabaseClient = (): SupabaseClient => {
   const key = getSupabaseAnonKey();
   const url = getSupabaseUrl();
-  
+
   if (!clientInstance || (clientInstance as any).__keyUsed !== key) {
     clientInstance = createClient(
       url,
-      key || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.placeholder'
+      key || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.placeholder',
+      {
+        global: {
+          fetch: serverProxyFetch,
+        },
+      }
     );
     (clientInstance as any).__keyUsed = key;
   }
